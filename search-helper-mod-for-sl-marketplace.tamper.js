@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Search Helper MOD for SL Marketplace
 // @namespace    https://github.com/natade-jp/
-// @version      0.11
+// @version      0.12
 // @description  Add functions on site of Second Life Marketplace. (Unofficial)
 // @author       2019, natade
 // @match        https://marketplace.secondlife.com/*
@@ -332,11 +332,20 @@
 	 * 次のページをバッググラウンドでダウンロードして下に表示する
 	 */
 	const getNextPage = function() {
+		// バッググラウンドで動作中は読み込まない
 		if(is_load_next_page) {
 			return;
 		}
 		is_load_next_page = true;
+
 		const get_page_num = href_next_page_offset + count_loaded_page;
+
+		// 最大ページを超えているので、これ以上、読み込まないようにする
+		if(get_page_num > href_page_max) {
+			is_load_next_page = false;
+			return;
+		}
+
 		const onLoad = function(load_html_text) {
 			const html_text = extractSearchResults(load_html_text);
 			const html = document.createElement("div");
@@ -460,6 +469,37 @@
 	};
 
 	/**
+	 * レイアウトを取得する
+	 */
+	const getLayout = function() {
+		// 通常検索結果のページ
+		const view_as = document.getElementsByClassName("view-as");
+		if(view_as.length >= 1) {
+			const view_as_data = view_as[0].children;
+			for(let i = 0; i < view_as_data.length; i++) {
+				// 非対象
+				if(view_as_data[i].classList.contains("hidden")) {
+					continue;
+				}
+				// SPAN要素つまり、押せない要素なのでこれが設定されている
+				if(view_as_data[i].tagName === "SPAN") {
+					const target = view_as_data[i];
+					if(target.classList.contains("thumbnails-view")) {
+						return "thumbnails";
+					}
+					else if(target.classList.contains("list-view")) {
+						return "list";
+					}
+					else if(target.classList.contains("gallery-view")) {
+						return "gallery";
+					}
+				}
+			}
+		}
+		return "gallery";
+	};
+
+	/**
 	 * 初期化を行う
 	 */
 	const initFunction = function() {
@@ -484,39 +524,8 @@
 			return;
 		}
 
-		// 今見ているページ
-		const current_page_node = document.querySelector(".pagination .current");
-		if(current_page_node) {
-			// ページ番号があるページの場合は以下も調査する
-
-			// 次のページなどのリンク先
-			const url_for_page_transition_node = document.querySelector(".pagination a");
-			if(!url_for_page_transition_node) {
-				return;
-			}
-
-			// 次のページなどのURLなどを取得する
-			// @ts-ignore
-			const href = url_for_page_transition_node.href;
-			href_page = parseFloat(current_page_node.textContent);
-			href_site = href.match(/^[^?]+/)[0];
-			href_query = /\?.*/.test(href) ? decodeURIComponent(href.match(/\?(.*)/)[1]) : "";
-
-			// 表示方法を調査する
-			// search[layout]=x を取得する
-			href_layout = /search\[layout\]=\w+/.test(href_query) ? href_query.match(/search\[layout\]=(\w+)/)[1] : "gallery"; 
-		}
-		else {
-			// ページ番号がない場合は、URLを利用して調査する
-			const href_decode = decodeURIComponent(location.href);
-
-			// 表示方法を調査する
-			// search[layout]=x を取得する
-			href_layout = /search\[layout\]=\w+/.test(href_decode) ? href_decode.match(/search\[layout\]=(\w+)/)[1] : "gallery"; 
-			if((href_layout !== "list") && (href_layout !== "gallery") && (href_layout !== "thumbnails")) {
-				return;
-			}
-		}
+		// 表示方法を調査する
+		href_layout = getLayout();
 
 		// 画像データにズーム機能を追加する
 		{
@@ -544,25 +553,36 @@
 			}
 		}
 
-		// 自分が見ているページが分からない場合は、ここで終了
+		// 今見ているページ
+		const current_page_node = document.querySelector(".pagination .current");
 		if(!current_page_node) {
+			// 自分が見ているページが分からない場合は、ここで終了
+			return;
+		}
+		// ページ番号があるページなので次を調査
+
+		{
+			// サーチ画面かショップ画面かを判定
+			const href = document.location.href;
+			if((href.indexOf("/products/search") < 0) && (href.indexOf("/stores/") < 0)) {
+				return;
+			}
+		}
+
+		// 次のページなどのリンク先
+		const url_for_page_transition_node = document.querySelector(".pagination a");
+		if(!url_for_page_transition_node) {
+			// 次のページがない
 			return;
 		}
 
-		// 以下は次のページを自動的に表示する機能
-		// 検索画面であることのチェックと、次のページを開く必要があるかのチェックを行う
-		{
-			// サーチ画面かどうかを判定
-			const href = document.location.href;
-			if(href.indexOf("products/search") < 0) {
-				return;
-			}
-			const noSearchResultsContainer = document.getElementById("search-results-container");
-			if(!noSearchResultsContainer) {
-				return;
-			}
-		}
-
+		// 次のページなどのURLなどを取得する
+		// @ts-ignore
+		const href = url_for_page_transition_node.href;
+		href_page = parseFloat(current_page_node.textContent);
+		href_site = href.match(/^[^?]+/)[0];
+		href_query = /\?.*/.test(href) ? decodeURIComponent(href.match(/\?(.*)/)[1]) : "";
+		
 		// 1ページ当たりの表示数
 		// @ts-ignore
 		href_per_page = parseFloat(document.getElementById("per_page").value);
@@ -604,17 +624,6 @@
 					product_id_table[product_list[i].id] = true;
 				}
 			}
-		}
-
-		{
-		//	console.log(href_layout);
-		//	console.log(href_per_page);
-		//	console.log(product_id_table);
-		//	console.log(href_site);
-		//	console.log(href_query);
-		//	console.log(href_page);
-		//	console.log(href_page_max);
-		//	console.log(getURL(3));
 		}
 
 		setInterval(onTimer, 500);
